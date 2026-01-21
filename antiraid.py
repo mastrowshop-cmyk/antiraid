@@ -6,7 +6,7 @@ from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 
 # =========================
 #  CONFIG
@@ -53,7 +53,7 @@ intents = discord.Intents.default()
 intents.guilds = True
 intents.members = True
 intents.messages = True
-intents.message_content = True  # можно выключить, если не нужен анти-спам по сообщениям
+intents.message_content = True  # выключи, если не нужен анти-спам по сообщениям
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
@@ -133,9 +133,8 @@ def has_admin_system_rights(member: discord.Member) -> bool:
     """
     Наша система админов:
     - Discord админ (administrator) всегда проходит
-    - whitelist_users (не наказывать анти-нюком/анти-спамом)
     - admin_users
-    - admin_roles (по ID роли)
+    - admin_roles
     """
     if member.guild_permissions.administrator:
         return True
@@ -316,9 +315,9 @@ def parse_duration(s: str) -> int:
 
 
 # =========================
-#  BACKGROUND WATCHER
+#  BACKGROUND WATCHER (FIXED)
 # =========================
-@bot.loop(seconds=10)
+@tasks.loop(seconds=10)
 async def lockdown_watcher():
     for g in bot.guilds:
         if g.id in lockdown_until and lockdown_until[g.id] and not is_lockdown(g.id):
@@ -349,13 +348,11 @@ async def on_member_join(member: discord.Member):
     while dq and (t - dq[0]) > JOIN_WINDOW_SEC:
         dq.popleft()
 
-    # already locked -> quarantine
     if is_lockdown(g.id):
         await quarantine_member(member, "Anti-raid: joined during lockdown")
         await log_event(g, f"🧷 Карантин новичка (локдаун): **{member}**")
         return
 
-    # join flood
     if len(dq) >= JOIN_THRESHOLD:
         await apply_lockdown(g, reason=f"{len(dq)} joins / {JOIN_WINDOW_SEC}s")
         await quarantine_member(member, "Anti-raid: raid detected")
@@ -367,7 +364,6 @@ async def on_message(message: discord.Message):
     if message.author.bot or not message.guild:
         return
 
-    # anti-spam rate (не применять к whitelist/admin-system)
     member = message.author if isinstance(message.author, discord.Member) else None
     if member and (is_whitelisted(message.guild.id, member.id) or has_admin_system_rights(member)):
         await bot.process_commands(message)
@@ -460,7 +456,6 @@ async def on_member_ban(guild: discord.Guild, user: discord.User):
 
 @bot.event
 async def on_member_remove(member: discord.Member):
-    # пытаемся определить kick через audit log
     g = member.guild
     executor, _ = await get_recent_audit_executor(g, discord.AuditLogAction.kick, target_id=member.id)
     if not executor:
@@ -473,7 +468,7 @@ async def on_member_remove(member: discord.Member):
 
 
 # =========================
-#  COMMANDS: ADMIN SYSTEM
+#  COMMANDS: HELP
 # =========================
 @bot.command(name="helpme")
 async def helpme(ctx: commands.Context):
@@ -497,6 +492,9 @@ async def helpme(ctx: commands.Context):
     await ctx.reply(embed=embed)
 
 
+# =========================
+#  COMMANDS: ADMIN SYSTEM
+# =========================
 @bot.command(name="setlog")
 @requires_admin()
 async def setlog(ctx: commands.Context, channel: discord.TextChannel | None = None):
